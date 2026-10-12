@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTU20 Config</title>
+<!-- RTU20 settings app: builds its forms from the firmware's cfg.schema and talks the JSON settings API
+     (firmware/README.md, "Settings API") over USB (Web Serial, Chrome/Edge) or runs a built-in demo.
+     No internet needed: open this file directly in the browser. -->
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d232b; --muted: #5d6875; --line: #dfe3e8;
+  --accent: #0b6bcb; --accent-ink: #ffffff; --soft: #eaf2fb; --warn: #a15c00; --warn-bg: #fff4e0;
+  --bad: #b3261e; --bad-bg: #fdecea; --good: #1e7b34; --good-bg: #e6f4ea; --dirty: #7a4cc2; --dirty-bg: #f2ecfb;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --log-bg: #0f1419; --log-ink: #d8dee6; --log-out: #7cc4ff; --log-in: #9be39b; --log-err: #ff8f8f; --log-dim: #7d8794;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b; --panel: #1a2027; --ink: #e4e8ec; --muted: #9aa5b1; --line: #2c343d;
+    --accent: #4da3ff; --accent-ink: #08121d; --soft: #1c2b3b; --warn: #f0b45c; --warn-bg: #33270f;
+    --bad: #ff8a80; --bad-bg: #3a1d1b; --good: #7bd88f; --good-bg: #17301d; --dirty: #c3a3ff; --dirty-bg: #2a2140;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b; --panel: #1a2027; --ink: #e4e8ec; --muted: #9aa5b1; --line: #2c343d;
+  --accent: #4da3ff; --accent-ink: #08121d; --soft: #1c2b3b; --warn: #f0b45c; --warn-bg: #33270f;
+  --bad: #ff8a80; --bad-bg: #3a1d1b; --good: #7bd88f; --good-bg: #17301d; --dirty: #c3a3ff; --dirty-bg: #2a2140;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 6px 12px; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+.app { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .2px; }
+.conn { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; background: var(--soft); color: var(--muted); white-space: nowrap; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.chip.on .dot { background: var(--good); } .chip.on { color: var(--good); background: var(--good-bg); }
+.chip.demo .dot { background: var(--warn); } .chip.demo { color: var(--warn); background: var(--warn-bg); }
+.info { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; margin-left: auto; }
+.info b { color: var(--ink); font-weight: 600; }
+
+main { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
+nav { border-right: 1px solid var(--line); padding: 12px 8px; overflow: auto; background: var(--panel); }
+nav button { display: flex; width: 100%; justify-content: space-between; align-items: center; border: 0; background: none; text-align: left; padding: 8px 10px; border-radius: 6px; color: var(--ink); }
+nav button.active { background: var(--soft); color: var(--accent); font-weight: 600; }
+nav .count { font-size: 11.5px; color: var(--muted); }
+nav .count.dirty { color: var(--dirty); font-weight: 700; }
+.content { overflow: auto; padding: 18px 24px 40px; min-width: 0; }
+.content h2 { margin: 0 0 4px; font-size: 18px; }
+.content .sub { margin: 0 0 16px; color: var(--muted); }
+
+.empty { max-width: 560px; margin: 8vh auto; text-align: center; color: var(--muted); }
+.empty h2 { color: var(--ink); }
+.empty .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
+.note { margin-top: 18px; font-size: 12.5px; }
+
+.field { display: grid; grid-template-columns: minmax(150px, 230px) minmax(0, 1fr); gap: 4px 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.field .k { font-family: var(--mono); font-size: 13px; padding-top: 6px; word-break: break-all; }
+.field .k .badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; font-family: system-ui, sans-serif; }
+.badge { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--soft); color: var(--muted); }
+.badge.restart { background: var(--warn-bg); color: var(--warn); }
+.badge.changed { background: var(--dirty-bg); color: var(--dirty); }
+.ctl { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ctl input[type=text], .ctl input[type=password], .ctl input[type=number], .ctl select {
+  width: 100%; max-width: 420px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.ctl input:focus, .ctl select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.ctl .unit { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.field.dirty .ctl input, .field.dirty .ctl select { border-color: var(--dirty); background: var(--dirty-bg); }
+.field.bad .ctl input, .field.bad .ctl select { border-color: var(--bad); }
+.help { grid-column: 2; color: var(--muted); font-size: 12.5px; }
+.err { grid-column: 2; color: var(--bad); font-size: 12.5px; font-weight: 600; }
+.toggle { position: relative; width: 40px; height: 22px; flex: none; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle span { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: .15s; cursor: pointer; }
+.toggle span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .15s; }
+.toggle input:checked + span { background: var(--accent); }
+.toggle input:checked + span::after { transform: translateX(18px); }
+.toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 16px; background: var(--panel); border-top: 1px solid var(--line); }
+footer .msg { flex: 1; min-width: 200px; font-size: 13px; }
+.msg.ok { color: var(--good); } .msg.bad { color: var(--bad); } .msg.warn { color: var(--warn); }
+
+.log { position: fixed; right: 16px; bottom: 64px; width: min(560px, calc(100vw - 32px)); height: min(460px, 60vh); display: none; flex-direction: column;
+  background: var(--log-bg); color: var(--log-ink); border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden; z-index: 10; }
+.log.open { display: flex; }
+.log .bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #252c34; font-size: 12.5px; }
+.log .bar b { flex: 1; }
+.log .bar button { background: #1d242c; border-color: #2c343d; color: var(--log-ink); padding: 3px 9px; font-size: 12px; }
+.log pre { flex: 1; margin: 0; padding: 8px 10px; overflow: auto; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+.log .o { color: var(--log-out); } .log .i { color: var(--log-in); } .log .e { color: var(--log-err); } .log .d { color: var(--log-dim); }
+.log form { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid #252c34; }
+.log form input { flex: 1; min-width: 0; background: #141a20; border: 1px solid #2c343d; border-radius: 6px; padding: 6px 8px; color: var(--log-ink); font: 12px var(--mono); }
+.log form button { background: #1d242c; border-color: #2c343d; color: var(--log-ink); }
+
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  nav { display: flex; gap: 4px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 6px 8px; }
+  nav button { width: auto; white-space: nowrap; gap: 8px; }
+  .content { padding: 14px 16px 40px; }
+  .field { grid-template-columns: 1fr; }
+  .help, .err { grid-column: 1; }
+  .info { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>RTU20 Config</h1>
+    <div class="conn">
+      <button id="btnUsb" class="primary" title="Chrome or Edge: pick the RTU's USB serial port">Connect USB</button>
+      <select id="demoProduct" aria-label="Demo product"><option>RTU20</option><option>RTU20-FLOW</option></select>
+      <button id="btnDemo">Start demo</button>
+      <button id="btnDisconnect" hidden>Disconnect</button>
+      <span id="chip" class="chip"><span class="dot"></span><span id="chipText">Not connected</span></span>
+    </div>
+    <div class="info" id="info"></div>
+  </header>
+
+  <main>
+    <nav id="nav" aria-label="Setting groups"></nav>
+    <section class="content" id="content">
+      <div class="empty">
+        <h2>Configure an RTU20 without reprogramming</h2>
+        <p>Connect the RTU's USB port and choose <b>Connect USB</b> (Chrome or Edge), or try the <b>demo</b>:
+          a simulated RTU with the real settings list and factory values exported from firmware 20.2.0.</p>
+        <p>The forms come from the RTU itself (<code>cfg.schema</code>), so new firmware settings appear here
+          without updating this page. Open <b>API traffic</b> to see every JSON request and reply.</p>
+        <div class="row"><button class="primary" onclick="ui.usb()">Connect USB</button><button onclick="ui.demo()">Start demo</button></div>
+        <p class="note" id="serialNote"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span class="msg" id="msg" role="status" aria-live="polite"></span>
+    <button id="btnLog">API traffic</button>
+    <button id="btnExport" disabled title="Download the current settings as a JSON file">Export</button>
+    <button id="btnImport" disabled title="Load settings from a JSON file as changes to review">Import</button>
+    <button id="btnReload" disabled>Reload</button>
+    <button id="btnDiscard" disabled>Discard</button>
+    <button id="btnSave" class="primary" disabled>Save to RTU</button>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+  </footer>
+</div>
+
+<div class="log" id="log" role="log" aria-label="API traffic">
+  <div class="bar"><b>API traffic</b><span class="d">→ sent &nbsp; ← received</span><button id="logClear">Clear</button><button id="logClose">Close</button></div>
+  <pre id="logBody"></pre>
+  <form id="logForm"><input id="logInput" placeholder='{"cmd":"cfg.rev"}' spellcheck="false" aria-label="Send JSON"><button>Send</button></form>
+</div>
+
+<script src="demo-data.js"></script>
+<script>
+"use strict";
+const REPLY_MAX = 896, PAGE_TAIL = 24, SET_MAX_KEYS = 40, TIMEOUT_MS = 4000;
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------------ groups (by key name) */
+const GROUPS = [
+  { id: "device", title: "Device & SMS", sub: "Identity, SMS PIN, phone list and alarm SMS.",
+    test: (k) => ["name", "pin", "alarmmask", "sms"].includes(k) || /^phone\d+$/.test(k) },
+  { id: "cell", title: "Cellular", sub: "SIM, operator profile and radio.", test: (k) => ["apn", "mno", "rat"].includes(k) },
+  { id: "cloud", title: "Cloud (MQTT / TLS)", sub: "Broker, topics, certificates and report interval.",
+    test: (k) => /^(mqtt|tls)\./.test(k) || ["topic", "telemetry", "keepalive"].includes(k) },
+  { id: "line1", title: "Line 1", sub: "Pump or valve 1: wiring, level control, schedule, protection.", test: (k) => k.startsWith("line1.") },
+  { id: "line2", title: "Line 2", sub: "Pump or valve 2.", test: (k) => k.startsWith("line2.") },
+  { id: "flow", title: "Flow meter", sub: "TUF-2000 on RS-485, volumes, daily report and units.",
+    test: (k) => /^(tuf|flow)\./.test(k) || ["daily", "units"].includes(k) },
+  { id: "ai", title: "Analog inputs", sub: "4-20 mA scaling.", test: (k) => /^ai\d+\./.test(k) },
+  { id: "io", title: "Digital I/O & power", sub: "Input sense, alarms, pulse counting, aux relays, supply.",
+    test: (k) => /^di\./.test(k) || ["pulse", "lpp", "aux", "siren", "vinlow"].includes(k) },
+  { id: "modbus", title: "Modbus RTU", sub: "RS-485 bus and generic points mb1..mb8.", test: (k) => /^mb(\.|\d)/.test(k) },
+  { id: "panel", title: "Front panel", sub: "20x4 LCD and keys.", test: (k) => k.startsWith("lcd.") },
+  { id: "other", title: "Other", sub: "", test: () => true },
+];
+
+/* template "line#.sp" for a key "line1.sp" */
+const templateOf = (key) => key.replace(/^(line|phone|ai|mb)(\d+)/, "$1#");
+
+/* ------------------------------------------------------------------ API traffic log */
+const log = {
+  add(kind, text) {
+    const body = $("logBody"), line = document.createElement("div");
+    line.className = kind;
+    const t = new Date().toTimeString().slice(0, 8);
+    line.textContent = `${t} ${kind === "o" ? "→" : kind === "i" ? "←" : kind === "e" ? "!" : "·"} ${text}`;
+    body.appendChild(line);
+    while (body.childNodes.length > 400) body.removeChild(body.firstChild);
+    body.scrollTop = body.scrollHeight;
+  },
+};
+
+/* ------------------------------------------------------------------ transport: USB (Web Serial) */
+class SerialLink {
+  constructor() { this.pending = null; this.buf = ""; this.name = "USB"; }
+  async open() {
+    this.port = await navigator.serial.requestPort();
+    await this.port.open({ baudRate: 115200 });
+    this.writer = this.port.writable.getWriter();
+    this.reading = this.readLoop();
+    await this.writeRaw("\r\n");                     // end any half-typed console line
+  }
+  async readLoop() {
+    const dec = new TextDecoder();
+    while (this.port && this.port.readable) {
+      this.reader = this.port.readable.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          this.buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = this.buf.indexOf("\n")) >= 0) {
+            const line = this.buf.slice(0, i).replace(/\r$/, "");
+            this.buf = this.buf.slice(i + 1);
+            this.onLine(line);
+          }
+        }
+      } catch (e) { log.add("e", "serial: " + e.message); }
+      finally { this.reader.releaseLock(); }
+      if (this.closing) break;
+    }
+  }
+  onLine(line) {
+    const s = line.trim();
+    if (!s) return;
+    if (s[0] !== "{") { log.add("d", "console: " + s); return; }   // banner, prompts, text replies
+    let obj;
+    try { obj = JSON.parse(s); } catch { log.add("e", "not JSON: " + s); return; }
+    log.add("i", s);
+    if (this.pending && obj.id === this.pending.id) { clearTimeout(this.pending.timer); this.pending.resolve(obj); this.pending = null; }
+  }
+  writeRaw(text) { return this.writer.write(new TextEncoder().encode(text)); }
+  request(obj) {
+    return new Promise((resolve, reject) => {
+      const text = JSON.stringify(obj);
+      if (text.length > 1270) { reject(new Error("request too long for the console line (1279)")); return; }
+      this.pending = { id: obj.id, resolve, timer: setTimeout(() => { this.pending = null; reject(new Error("no reply from the RTU (timeout)")); }, TIMEOUT_MS) };
+      log.add("o", text);
+      this.writeRaw(text + "\r\n").catch(reject);
+    });
+  }
+  async close() {
+    this.closing = true;
+    try { await this.reader?.cancel(); } catch {}
+    try { this.writer?.releaseLock(); } catch {}
+    try { await this.port?.close(); } catch {}
+    this.port = null;
+  }
+}
+
+/* ------------------------------------------------------------------ transport: demo RTU */
+/* Simulates the firmware's settings API with the real schema and factory values exported from the
+ * firmware (demo-data.js). Paging and reply formats follow cmd.c; value checks follow the schema only,
+ * so a real RTU may refuse values the demo accepts (e.g. a malformed schedule). */
+class DemoLink {
+  constructor(product) {
+    const d = window.RTU_DEMO && window.RTU_DEMO[product];
+    if (!d) throw new Error("demo-data.js missing: run make -C firmware/tests demo");
+    this.name = "Demo " + product;
+    const first = d["cfg.schema"][0];
+    this.fw = first.fw; this.product = first.product;
+    this.schema = d["cfg.schema"].flatMap((p) => p.keys);
+    this.values = Object.assign({}, ...d["cfg.get"].map((p) => p.cfg));
+    this.order = Object.keys(this.values);
+    this.byTemplate = Object.fromEntries(this.schema.map((s) => [s.k, s]));
+    this.rev = first.rev;
+  }
+  async open() {}
+  async close() {}
+  bumpRev() { this.rev = Math.floor(Math.random() * 0xffffffff).toString(16).toUpperCase().padStart(8, "0"); }
+  page(items, write) {
+    // fill like page_fits() in cmd.c: stop before the reply would reach REPLY_MAX - PAGE_TAIL
+    const out = [];
+    let i = 0, size = write([]).length;
+    for (; i < items.length; i++) {
+      const trial = write(out.concat([items[i]])).length;
+      if (trial + PAGE_TAIL >= REPLY_MAX) break;
+      out.push(items[i]); size = trial;
+    }
+    return { out, done: i >= items.length, used: i };
+  }
+  check(key, v) {
+    const s = this.byTemplate[templateOf(key)];
+    if (!s || !(key in this.values)) return `unknown key '${key}'`;
+    const num = Number(v);
+    if (s.t === "int" && (!/^-?\d+$/.test(v) || (s.min != null && (num < s.min || num > s.max)))) return `${key} ${s.min}..${s.max}`;
+    if (s.t === "float" && (v === "" || isNaN(num) || (s.max && (num < s.min || num > s.max)))) return s.max ? `${key} ${s.min}..${s.max}` : `${key}: number`;
+    if (s.t === "enum" && !s.c.split("|").includes(v)) return `${key}: ${s.c}`;
+    if ((s.t === "text" || s.t === "secret") && s.max && v.length > s.max) return `${key}: max ${s.max} characters`;
+    if (key === "pin" && !/^\d{4,8}$/.test(v)) return "pin: 4-8 digits";
+    if (s.t === "list" && v === "") return `${key}: ${s.h || "value needed"}`;
+    return null;
+  }
+  reply(req) {
+    const base = { id: req.id || "" };
+    const from = Math.max(0, Number(req.from) || 0);
+    switch (req.cmd) {
+      case "cfg.rev": return { ...base, ok: true, rev: this.rev };
+      case "cfg.get": {
+        const keys = this.order.slice(from);
+        const head = { ...base, ok: true, rev: this.rev, count: this.order.length };
+        const mk = (ks) => JSON.stringify({ ...head, cfg: Object.fromEntries(ks.map((k) => [k, this.values[k]])), next: 999 });
+        const p = this.page(keys, mk);
+        return { ...head, cfg: Object.fromEntries(p.out.map((k) => [k, this.values[k]])), next: p.done ? -1 : from + p.used };
+      }
+      case "cfg.schema": {
+        const head = { ...base, ok: true, rev: this.rev, fw: this.fw, product: this.product, count: this.schema.length };
+        const p = this.page(this.schema.slice(from), (ks) => JSON.stringify({ ...head, keys: ks, next: 999 }));
+        return { ...head, keys: p.out, next: p.done ? -1 : from + p.used };
+      }
+      case "cfg.set": {
+        const cfg = req.cfg;
+        if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return { ...base, ok: false, msg: 'cfg.set needs "cfg":{"key":"value",...}' };
+        if (Object.keys(cfg).length > SET_MAX_KEYS) return { ...base, ok: false, msg: "JSON too long (cfg.set: max 40 keys)" };
+        if (req.rev && req.rev.toUpperCase() !== this.rev) return { ...base, ok: false, rev: this.rev, msg: "settings changed since they were read: read them again" };
+        const next = { ...this.values };
+        let count = 0, restart = false;
+        for (const [key, raw] of Object.entries(cfg)) {
+          if (raw !== null && typeof raw === "object") return { ...base, ok: false, key, msg: "value must be text or a number" };
+          const v = raw === true ? "1" : raw === false ? "0" : raw === null ? "" : String(raw);
+          const s = this.byTemplate[templateOf(key)];
+          if (s && s.t === "secret" && v === "***") continue;
+          const bad = this.check(key, v);
+          if (bad) return { ...base, ok: false, key, msg: bad };
+          next[key] = s && s.t === "secret" ? (v ? "***" : "") : v;
+          if (s && s.restart) restart = true;
+          count++;
+        }
+        if (!count) return { ...base, ok: true, rev: this.rev, msg: "no change" };
+        this.values = next;
+        this.bumpRev();
+        return { ...base, ok: true, rev: this.rev, set: count, saved: true, restart, msg: `${count} key${count === 1 ? "" : "s"} set` };
+      }
+      case "get": return req.key in this.values ? { ...base, ok: true, msg: this.values[req.key] } : { ...base, ok: false, msg: "unknown key" };
+      default: return { ...base, ok: false, msg: `demo: '${req.cmd}' is not simulated (cfg.* and get are)` };
+    }
+  }
+  request(obj) {
+    const text = JSON.stringify(obj);
+    log.add("o", text);
+    return new Promise((resolve) => setTimeout(() => {
+      const r = this.reply(JSON.parse(text));
+      log.add("i", JSON.stringify(r));
+      resolve(r);
+    }, 60 + Math.random() * 90));
+  }
+}
+
+/* ------------------------------------------------------------------ app */
+const ui = {
+  link: null, seq: 0, schema: [], tmpl: {}, keys: [], values: {}, edits: {}, errors: {}, rev: "", fw: "", product: "",
+  group: "device", busy: false,
+
+  id() { return "ui-" + (++this.seq); },
+  say(text, kind = "") { const m = $("msg"); m.textContent = text; m.className = "msg " + kind; },
+  async call(obj) { return this.link.request({ id: this.id(), ...obj }); },
+
+  async usb() {
+    if (!("serial" in navigator)) {
+      this.say("This browser has no Web Serial. Use Chrome or Edge on a PC, or try the demo.", "bad");
+      return;
+    }
+    try { await this.connect(new SerialLink()); }
+    catch (e) { if (e.name !== "NotFoundError") this.say("USB: " + e.message, "bad"); }
+  },
+  async demo() { await this.connect(new DemoLink($("demoProduct").value)); },
+
+  async connect(link) {
+    if (this.link) await this.disconnect();
+    await link.open();
+    this.link = link;
+    const chip = $("chip");
+    chip.className = "chip " + (link instanceof DemoLink ? "demo" : "on");
+    $("chipText").textContent = link.name;
+    $("btnDisconnect").hidden = false;
+    log.add("d", "connected: " + link.name);
+    await this.load();
+  },
+  async disconnect() {
+    const l = this.link;
+    this.link = null;
+    if (l) await l.close();
+    $("chip").className = "chip"; $("chipText").textContent = "Not connected";
+    $("btnDisconnect").hidden = true;
+    this.buttons();
+  },
+
+  /* read cfg.schema then cfg.get, page by page, as an app should */
+  async pages(cmd, take) {
+    let from = 0, rev = null, n = 0;
+    while (from >= 0) {
+      const r = await this.call({ cmd, from });
+      if (!r.ok) throw new Error(r.msg || cmd + " failed");
+      if (rev !== null && r.rev !== rev) return null;          // someone saved between pages
+      rev = r.rev; take(r);
+      from = r.next; if (++n > 50) throw new Error(cmd + ": too many pages");
+    }
+    return rev;
+  },
+  async load() {
+    this.busy = true; this.buttons();
+    this.say("Reading settings…");
+    try {
+      const schema = [];
+      let head = null;
+      await this.pages("cfg.schema", (r) => { head = head || r; schema.push(...r.keys); });
+      let values, rev = null;
+      for (let tries = 0; tries < 3 && rev === null; tries++) {
+        values = {};
+        rev = await this.pages("cfg.get", (r) => Object.assign(values, r.cfg));
+      }
+      if (rev === null) throw new Error("settings keep changing while reading; try again");
+      this.schema = schema;
+      this.tmpl = Object.fromEntries(schema.map((s) => [s.k, s]));
+      this.keys = Object.keys(values);
+      this.values = values; this.rev = rev; this.fw = head.fw; this.product = head.product;
+      this.edits = {}; this.errors = {};
+      this.say(`Read ${this.keys.length} settings.`, "ok");
+    } catch (e) {
+      this.say(e.message, "bad");
+    }
+    this.busy = false;
+    this.render();
+  },
+
+  /* only the changed keys go out; at most 40 per cfg.set (each request is all-or-nothing) */
+  async save() {
+    const changes = Object.entries(this.edits);
+    if (!changes.length) return;
+    this.busy = true; this.buttons(); this.errors = {};
+    this.say("Saving…");
+    let restart = false, total = 0;
+    try {
+      for (let i = 0; i < changes.length; i += SET_MAX_KEYS) {
+        const cfg = Object.fromEntries(changes.slice(i, i + SET_MAX_KEYS));
+        const r = await this.call({ cmd: "cfg.set", rev: this.rev, cfg });
+        if (!r.ok) {
+          if (r.key) { this.errors[r.key] = r.msg; this.group = this.groupOf(r.key).id; }
+          const stale = !r.key && r.rev && r.rev !== this.rev;
+          this.say(stale ? "Someone changed the settings since they were read. Reload, then make your changes again."
+                         : `Not saved: ${r.key ? r.key + " - " : ""}${r.msg}. Nothing in this request was changed.`, "bad");
+          this.busy = false; this.render(); return;
+        }
+        for (const k of Object.keys(cfg)) delete this.edits[k];
+        this.rev = r.rev; total += r.set || 0; restart = restart || r.restart;
+      }
+      await this.load();                                      // values in the RTU's own format
+      this.say(`Saved ${total} setting${total === 1 ? "" : "s"}.` + (restart ? " The modem reconnects to the network now (about a minute offline)." : ""), restart ? "warn" : "ok");
+    } catch (e) {
+      this.say(e.message, "bad");
+      this.busy = false; this.render();
+    }
+  },
+
+  groupOf(key) { return GROUPS.find((g) => g.test(key)); },
+  value(key) { return key in this.edits ? this.edits[key] : this.values[key]; },
+  edit(key, v) {
+    const orig = this.values[key];
+    const s = this.tmpl[templateOf(key)];
+    if (v === orig || (s && s.t === "secret" && v === "")) delete this.edits[key]; else this.edits[key] = v;
+    delete this.errors[key];
+    this.renderNav(); this.buttons();
+    const row = document.querySelector(`[data-key="${CSS.escape(key)}"]`);
+    if (row) { row.classList.toggle("dirty", key in this.edits); row.classList.remove("bad"); row.querySelector(".err")?.remove();
+      row.querySelector(".badge.changed")?.toggleAttribute("hidden", !(key in this.edits)); }
+  },
+
+  buttons() {
+    const on = !!this.link && !this.busy && this.keys.length > 0;
+    const dirty = Object.keys(this.edits).length;
+    $("btnSave").disabled = !on || !dirty;
+    $("btnSave").textContent = dirty ? `Save ${dirty} change${dirty === 1 ? "" : "s"}` : "Save to RTU";
+    $("btnDiscard").disabled = !on || !dirty;
+    $("btnReload").disabled = !this.link || this.busy;
+    $("btnExport").disabled = !on;
+    $("btnImport").disabled = !on;
+  },
+
+  render() {
+    $("info").innerHTML = this.product ? `<span>Product <b>${esc(this.product)}</b></span><span>Firmware <b>${esc(this.fw)}</b></span>` +
+      `<span>Device <b>${esc(this.values.name || "")}</b></span><span>Rev <b class="mono">${esc(this.rev)}</b></span>` : "";
+    this.renderNav(); this.renderGroup(); this.buttons();
+  },
+  renderNav() {
+    const nav = $("nav");
+    nav.innerHTML = "";
+    if (!this.keys.length) return;
+    for (const g of GROUPS) {
+      const keys = this.keys.filter((k) => this.groupOf(k) === g);
+      if (!keys.length) continue;
+      const dirty = keys.filter((k) => k in this.edits).length;
+      const b = document.createElement("button");
+      b.className = g.id === this.group ? "active" : "";
+      b.innerHTML = `<span>${esc(g.title)}</span><span class="count${dirty ? " dirty" : ""}">${dirty ? dirty + " changed" : keys.length}</span>`;
+      b.onclick = () => { this.group = g.id; this.renderNav(); this.renderGroup(); };
+      nav.appendChild(b);
+    }
+  },
+  renderGroup() {
+    const c = $("content");
+    if (!this.keys.length) return;
+    let g = GROUPS.find((x) => x.id === this.group);
+    if (!this.keys.some((k) => this.groupOf(k) === g)) { g = GROUPS.find((x) => this.keys.some((k) => this.groupOf(k) === x)); this.group = g.id; }
+    c.innerHTML = `<h2>${esc(g.title)}</h2><p class="sub">${esc(g.sub)}</p>`;
+    for (const key of this.keys.filter((k) => this.groupOf(k) === g)) c.appendChild(this.field(key));
+    c.scrollTop = 0;
+  },
+  field(key) {
+    const s = this.tmpl[templateOf(key)] || { t: "text" };
+    const row = document.createElement("div");
+    row.className = "field" + (key in this.edits ? " dirty" : "") + (this.errors[key] ? " bad" : "");
+    row.dataset.key = key;
+    const range = s.t === "int" || s.t === "float" ? (s.max ? `${s.min}..${s.max}` : "") : "";
+    row.innerHTML = `<div class="k">${esc(key)}<div class="badges"><span class="badge">${esc(s.t)}</span>` +
+      (range ? `<span class="badge">${esc(range)}</span>` : "") +
+      (s.restart ? `<span class="badge restart" title="Changing this reconnects the modem">reconnects</span>` : "") +
+      `<span class="badge changed"${key in this.edits ? "" : " hidden"}>changed</span></div></div><div class="ctl"></div>`;
+    const ctl = row.querySelector(".ctl");
+    const v = this.value(key);
+    let input;
+    if (s.t === "int" && s.min === 0 && s.max === 1) {
+      const t = document.createElement("label");
+      t.className = "toggle";
+      t.innerHTML = `<input type="checkbox" aria-label="${esc(key)}"><span></span>`;
+      input = t.querySelector("input");
+      input.checked = v === "1";
+      input.onchange = () => this.edit(key, input.checked ? "1" : "0");
+      ctl.appendChild(t);
+      const st = document.createElement("span"); st.className = "unit"; st.textContent = input.checked ? "on" : "off";
+      input.addEventListener("change", () => (st.textContent = input.checked ? "on" : "off"));
+      ctl.appendChild(st);
+    } else if (s.t === "enum") {
+      input = document.createElement("select");
+      for (const o of s.c.split("|")) input.add(new Option(o, o));
+      if (!s.c.split("|").includes(v)) input.add(new Option(v, v));
+      input.value = v;
+      input.onchange = () => this.edit(key, input.value);
+      ctl.appendChild(input);
+    } else {
+      input = document.createElement("input");
+      input.type = s.t === "secret" ? "password" : s.t === "int" || s.t === "float" ? "number" : "text";
+      if (s.t === "int") input.step = "1";
+      if (s.t === "float") input.step = "any";
+      if ((s.t === "int" || s.t === "float") && s.max) { input.min = s.min; input.max = s.max; }
+      if ((s.t === "text" || s.t === "secret") && s.max) input.maxLength = s.max;
+      if (s.t === "secret") { input.placeholder = v === "***" ? "set - type to replace" : "not set"; input.value = key in this.edits ? this.edits[key] : ""; input.autocomplete = "new-password"; }
+      else input.value = v;
+      input.spellcheck = false;
+      input.setAttribute("aria-label", key);
+      input.oninput = () => this.edit(key, input.value);
+      ctl.appendChild(input);
+    }
+    if (s.u) { const u = document.createElement("span"); u.className = "unit"; u.textContent = s.u; ctl.appendChild(u); }
+    if (s.h) { const h = document.createElement("div"); h.className = "help"; h.textContent = s.h; row.appendChild(h); }
+    if (this.errors[key]) { const e = document.createElement("div"); e.className = "err"; e.textContent = this.errors[key]; row.appendChild(e); }
+    return row;
+  },
+
+  exportFile() {
+    const data = { product: this.product, fw: this.fw, rev: this.rev, saved: new Date().toISOString(),
+      cfg: Object.fromEntries(this.keys.filter((k) => this.tmpl[templateOf(k)]?.t !== "secret").map((k) => [k, this.values[k]])) };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    a.download = `${this.values.name || "rtu20"}-settings.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    this.say("Exported (passwords and the PIN are never included).", "ok");
+  },
+  async importFile(file) {
+    try {
+      const data = JSON.parse(await file.text());
+      const cfg = data.cfg || data;
+      let n = 0, skipped = 0;
+      for (const [k, v] of Object.entries(cfg)) {
+        if (!(k in this.values) || k === "name") { skipped++; continue; }   // keep this RTU's own name
+        if (String(v) !== this.values[k]) { this.edits[k] = String(v); n++; }
+      }
+      this.render();
+      this.say(`Imported ${n} change${n === 1 ? "" : "s"} to review${skipped ? `, ${skipped} skipped (unknown key or name)` : ""}. Nothing is saved until you press Save.`, n ? "warn" : "ok");
+    } catch (e) { this.say("Import: " + e.message, "bad"); }
+  },
+};
+
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+/* ------------------------------------------------------------------ wiring */
+$("btnUsb").onclick = () => ui.usb();
+$("btnDemo").onclick = () => ui.demo();
+$("btnDisconnect").onclick = () => ui.disconnect();
+$("btnSave").onclick = () => ui.save();
+$("btnReload").onclick = () => { if (!Object.keys(ui.edits).length || confirm("Discard your unsaved changes and reload?")) ui.load(); };
+$("btnDiscard").onclick = () => { ui.edits = {}; ui.errors = {}; ui.render(); ui.say("Changes discarded."); };
+$("btnExport").onclick = () => ui.exportFile();
+$("btnImport").onclick = () => $("importFile").click();
+$("importFile").onchange = (e) => { if (e.target.files[0]) ui.importFile(e.target.files[0]); e.target.value = ""; };
+$("btnLog").onclick = () => $("log").classList.toggle("open");
+$("logClose").onclick = () => $("log").classList.remove("open");
+$("logClear").onclick = () => ($("logBody").textContent = "");
+$("logForm").onsubmit = async (e) => {
+  e.preventDefault();
+  if (!ui.link) { log.add("e", "connect first (USB or demo)"); return; }
+  let obj;
+  try { obj = JSON.parse($("logInput").value); } catch { log.add("e", "not valid JSON"); return; }
+  if (!obj.id) obj.id = ui.id();
+  try { await ui.link.request(obj); } catch (err) { log.add("e", err.message); }
+};
+window.addEventListener("beforeunload", (e) => { if (Object.keys(ui.edits).length) { e.preventDefault(); e.returnValue = ""; } });
+if (!("serial" in navigator)) $("serialNote").textContent = "USB needs Chrome or Edge on a PC (Web Serial). The demo works in any browser.";
+if (!window.RTU_DEMO) { $("btnDemo").disabled = true; $("serialNote").textContent += " Demo data missing: run make -C firmware/tests demo."; }
+/* index.html#demo or #demo=RTU20-FLOW starts the demo right away */
+const autoDemo = /^#demo(?:=(.+))?$/.exec(location.hash);
+if (autoDemo && window.RTU_DEMO) { if (autoDemo[1]) $("demoProduct").value = decodeURIComponent(autoDemo[1]); ui.demo(); }
+</script>
+</body>
+</html>
